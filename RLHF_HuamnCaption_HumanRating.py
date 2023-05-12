@@ -52,7 +52,7 @@ def calculate_cross_entropy(string1, string2):
     
     return mean_cross_entropy.numpy()
   
-  # Update model parameters using RL algorithm
+# Update model parameters using RL algorithm
 optimizer = tf.keras.optimizers.SGD(learning_rate=0.001)
 for img in os.listdir(dataset_images): # Number of RL iterations
     RL_learning_loop += 1
@@ -96,11 +96,20 @@ for img in os.listdir(dataset_images): # Number of RL iterations
       # Get the weights of the "embedding_1" layer
       weights = embedding_layer.get_weights()[0]
       weights = np.array(weights)
-      print("Shape of the weights: ".format(weights.shape))
-      gradients = np.gradient(weights, loss)
+      print("Shape of the weights: {}".format(weights.shape))
+      # Calculate the gradient using chain rule
+      gradients = np.multiply(loss, np.ones_like(weights))
+      # Reshape the gradients to match the shape of the weights
+      gradients = gradients.reshape(weights.shape)
+      
       # Update weights using optimizer
       weights -= optimizer.learning_rate * gradients
+      print("Shape of the weights after optimisation: {}".format(weights.shape))
       embedding_layer.set_weights([weights])
       print("**--Weights updated--**")
       # Save updated model and Q-table
       model.save('models/model_rl.h5')
+
+      # Save human captions to the file
+      with open(human_captions_file, 'a') as file:
+        file.write(human_caption + "\n")
