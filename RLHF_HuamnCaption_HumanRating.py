@@ -52,64 +52,72 @@ def calculate_cross_entropy(string1, string2):
     
     return mean_cross_entropy.numpy()
   
-# Update model parameters using RL algorithm
-optimizer = tf.keras.optimizers.SGD(learning_rate=0.001)
-for img in os.listdir(dataset_images): # Number of RL iterations
-    RL_learning_loop += 1
-    if RL_learning_loop < 10:
-      image_path = dataset_images + "/" + img
-      image = Image.open(image_path)
-      #image = image.resize(300,300)
-      image.show()
-      photo = extract_features(image_path, xception_model)
-      in_text = 'start'
-      for i in range(max_length):
-          sequence = tokenizer.texts_to_sequences([in_text])[0]
-          sequence = pad_sequences([sequence], maxlen=max_length)
-          preds = model.predict([photo,sequence], verbose=0)
-          next_index = sample_pred(preds, temperature=0.5) # introduce randomness with temperature=0.5
-          next_word = word_for_id(next_index, tokenizer)
-          if next_word is None:
-              break
-          in_text += ' ' + next_word
-          if next_word == 'end':
-              break
+# Register the custom loss function
+with tf.keras.utils.custom_object_scope({'custom_loss': custom_loss}):
+    # Update model parameters using RL algorithm
+    optimizer = tf.keras.optimizers.SGD(learning_rate=0.001)
+    for img in os.listdir(dataset_images): # Number of RL iterations
+        RL_learning_loop += 1
+        if RL_learning_loop < 10:
+            image_path = dataset_images + "/" + img
+            image = Image.open(image_path)
+            #image = image.resize(300,300)
+            image.show()
+            photo = extract_features(image_path, xception_model)
+            in_text = 'start'
 
-      model_caption = in_text
-      print("Generated caption:", in_text)
-      human_caption = input("Enter Human Caption")
+            # Create a copy of the model for updating weights
+            updated_model = tf.keras.models.clone_model(model)
+            updated_model.set_weights(model.get_weights())
 
-      cross_entropy = calculate_cross_entropy(model_caption, human_caption)
-      print("The cross_entropy betwee two stringa are:", cross_entropy)
+            # Compile the updated model
+            updated_model.compile(optimizer=optimizer, loss=custom_loss)
 
-      #Huma feedback 
-      feedback = float(input("Rate the quality of the caption (-1 or +1): "))
-      loss = custom_loss(cross_entropy, feedback)
-      
-      # Compute gradients
-      variables = model.trainable_variables
+            for i in range(max_length):
+                sequence = tokenizer.texts_to_sequences([in_text])[0]
+                sequence = pad_sequences([sequence], maxlen=max_length)
+                preds = updated_model.predict([photo,sequence], verbose=0)
+                next_index = sample_pred(preds, temperature=0.5) # introduce randomness with temperature=0.5
+                next_word = word_for_id(next_index, tokenizer)
+                if next_word is None:
+                    break
+                in_text += ' ' + next_word
+                if next_word == 'end':
+                    break
 
-      gradients = []
-      # Get the "embedding_1" layer
-      embedding_layer = model.get_layer('embedding_1')
+            model_caption = in_text
+            print("Generated caption:", in_text)
+            human_caption = input("Enter Human Caption")
 
-      # Get the weights of the "embedding_1" layer
-      weights = embedding_layer.get_weights()[0]
-      weights = np.array(weights)
-      print("Shape of the weights: {}".format(weights.shape))
-      # Calculate the gradient using chain rule
-      gradients = np.multiply(loss, np.ones_like(weights))
-      # Reshape the gradients to match the shape of the weights
-      gradients = gradients.reshape(weights.shape)
-      
-      # Update weights using optimizer
-      weights -= optimizer.learning_rate * gradients
-      print("Shape of the weights after optimisation: {}".format(weights.shape))
-      embedding_layer.set_weights([weights])
-      print("**--Weights updated--**")
-      # Save updated model and Q-table
-      model.save('models/model_rl.h5')
+            cross_entropy = calculate_cross_entropy(model_caption, human_caption)
+            print("The cross_entropy between two strings is:", cross_entropy)
 
-      # Save human captions to the file
-      with open(human_captions_file, 'a') as file:
-        file.write(human_caption + "\n")
+            # Human feedback 
+            feedback = float(input("Rate the quality of the caption (-1 or +1): "))
+            loss = custom_loss(cross_entropy, feedback)
+
+            # Compute gradients and update weights for all trainable parameters
+            for variable in updated_model.trainable_variables:
+                weights = variable.numpy()  # Get the weights as a NumPy array
+
+                # Calculate the gradient using chain rule
+                gradients = np.multiply(loss, np.ones_like(weights))
+
+                # Reshape the gradients to match the shape of the weights
+                gradients = gradients.reshape(weights.shape)
+
+                # Update weights using optimizer
+                weights -= optimizer.learning_rate * gradients
+
+                # Set the updated weights back to the variable
+                variable.assign(weights)
+
+                # Print the shape of the weights after optimization
+                print("Shape of the weights after optimization:", weights.shape)
+
+            # Save updated model and Q-table
+            updated_model.save('models/model_rl.h5')
+
+            # Save human captions to the file
+            with open(human_captions_file, 'a') as file:
+                file.write(human_caption + "\n")
